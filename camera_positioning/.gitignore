@@ -1,0 +1,48 @@
+# Ignore Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore virtual environments
+venv/
+.env/
+
+# Ignore system files
+.DS_Store
+Thumbs.db
+
+# Ignore backup files
+*.bak
+*.swp
+
+# Ignore logs and temporary files
+*.log
+*.tmp
+*.out
+
+# Ignore compiled binaries
+*.so
+*.o
+*.a
+*.exe
+
+# Ignore Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Ignore IDE specific files
+.vscode/
+.idea/
+*.iml
+
+# Ignore dataset and output files
+data/
+output/
+results/
+
+# Ignore uploaded and processed calibration files
+uploaded_calibration.txt
+
+# Ignore backup versions of JSON files
+ground_truth/all_sequences_backup.json
+
