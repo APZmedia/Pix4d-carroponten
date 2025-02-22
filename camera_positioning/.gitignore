@@ -36,7 +36,6 @@ Thumbs.db
 *.iml
 
 # Ignore dataset and output files
-data/
 output/
 results/
 
