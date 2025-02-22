@@ -4,29 +4,38 @@ import io
 import csv
 import plotly.graph_objects as go
 
-# Importamos las funciones que creamos:
+# Módulos que ya tienes en tu repo
 from data.json_handler import (
     load_sequences_json,
     save_sequences_json
 )
-from data.pix4d_import import (
-    load_pix4d_calibrations,
-    apply_calibrations_to_json
-)
-from data.pix4d_export import export_to_pix4d_csv
 from processing.cluster_calibrator import calibrate_all_sequences
 from config import CENTER
 
 import numpy as np
 import math
+import json
 
 #########################
 # Funciones de ayuda
 #########################
 
+def parse_initial_txt(txt_path):
+    """
+    Ejemplo de parseo del TXT inicial.
+    Ajusta esta función para extraer la info que necesites.
+    """
+    with open(txt_path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+    # Retornamos algo que puedas usar después
+    return {
+        "num_lines": len(lines),
+        "lines": lines
+    }
+
 def compute_sequence_radius(step_info, center):
     """
-    Calcula el radio a partir de las imágenes calibradas en step_info (campo 'original').
+    Calcula el radio a partir de las imágenes 'original' (calibradas).
     """
     distances = []
     for item in step_info["items"]:
@@ -43,7 +52,7 @@ def compute_sequence_radius(step_info, center):
 
 def update_sequence_radii(all_data, center):
     """
-    Para cada StepXX, si no tiene radio, lo calculamos por la mediana de distancias de las calibradas.
+    Para cada StepXX, si no tiene radio definido, lo calculamos por la mediana de distancias.
     """
     for step_name, step_info in all_data.items():
         radius = compute_sequence_radius(step_info, center)
@@ -53,23 +62,22 @@ def update_sequence_radii(all_data, center):
 
 def create_plot(all_data):
     """
-    Crea una figura Plotly con:
-    - Puntos rojos para 'original' (calibrados).
-    - Puntos verdes para 'estimated'.
-    - Puntos grises para 'uncalibrated'.
-    - Un marker en el 'center'.
+    Crea un Plotly Figure con:
+      - Puntos rojos (original/calibradas)
+      - Puntos verdes (estimated)
+      - Puntos grises (uncalibrated)
+      - El 'center' en púrpura
     """
     fig = go.Figure()
 
-    # Listas para cada tipo
     x_orig, y_orig = [], []
     x_est, y_est = [], []
     x_unc, y_unc = [], []
 
     for step_name, step_info in all_data.items():
         for item in step_info["items"]:
-            x = item.get("X", None)
-            y = item.get("Y", None)
+            x = item.get("X")
+            y = item.get("Y")
             if x is None or y is None:
                 continue
             status = item.get("Calibration_Status", "uncalibrated")
@@ -88,38 +96,38 @@ def create_plot(all_data):
         fig.add_trace(go.Scatter(
             x=x_orig, y=y_orig,
             mode='markers',
-            marker=dict(color='red', symbol='circle', size=7),
+            marker=dict(color='red', size=6),
             name='Calibradas (original)'
         ))
+
     # Puntos estimados (verde)
     if x_est and y_est:
         fig.add_trace(go.Scatter(
             x=x_est, y=y_est,
             mode='markers',
-            marker=dict(color='green', symbol='circle-open', size=7),
+            marker=dict(color='green', size=6),
             name='Estimadas'
         ))
+
     # Puntos uncalibrated (gris)
     if x_unc and y_unc:
         fig.add_trace(go.Scatter(
             x=x_unc, y=y_unc,
             mode='markers',
-            marker=dict(color='gray', symbol='x', size=6),
+            marker=dict(color='gray', size=6, symbol='x'),
             name='Sin calibrar'
         ))
 
-    # Agregamos el centro en púrpura
-    cx, cy = CENTER[0], CENTER[1]
+    # Centro en púrpura
     fig.add_trace(go.Scatter(
-        x=[cx],
-        y=[cy],
+        x=[CENTER[0]], y=[CENTER[1]],
         mode='markers',
         marker=dict(color='purple', symbol='star', size=12),
         name='Center'
     ))
 
     fig.update_layout(
-        title="Visualización de Cámaras Carroponte",
+        title="Visualización Cámaras (Carroponte)",
         xaxis_title="X",
         yaxis_title="Y",
         xaxis=dict(scaleanchor="y", scaleratio=1),
@@ -127,62 +135,49 @@ def create_plot(all_data):
     )
     return fig
 
-def pipeline(json_data, calib_csv):
-    """
-    Ejecuta el pipeline completo:
-      1) Carga JSON desde memoria (json_data).
-      2) Carga calibraciones (calib_csv).
-      3) Aplica calibraciones.
-      4) Calcula radio de cada secuencia.
-      5) Calibra clusters (interpolación).
-      6) Retorna all_data modificado.
-    """
-    # Gradio pasa el contenido del JSON como string, si usas 'File' para JSON.
-    # Si usas un path, deberías adaptarlo. Aquí supondremos que json_data es un string con JSON.
-    import json
-    all_data = json.loads(json_data)
+#########################
+# Pipeline principal
+#########################
 
-    # 2) Cargar calibraciones de Pix4D
-    # Gradio 'calib_csv' es un NamedTemporaryFile, leemos su path:
-    if calib_csv is not None:
-        pix4d_path = calib_csv.name
-        calibrations = load_pix4d_calibrations(pix4d_path)
-        # 3) Aplica calibraciones
-        all_data = apply_calibrations_to_json(all_data, calibrations)
-    else:
-        # Si no se sube CSV, no hace nada
-        pass
+def pipeline(txt_file_path=None):
+    """
+    Ejecuta la lógica:
+      1) Cargar JSON desde data/ground_truth/all_sequences.json
+      2) (Opcional) procesar el TXT inicial
+      3) Calcular radios
+      4) Calibrar clusters (propagar estimaciones)
+      5) Devuelve all_data final
+    """
 
-    # 4) Calcular/actualizar radios
+    # 1) Cargamos el JSON desde una ruta fija
+    all_data = load_sequences_json()
+
+    # 2) Si se ha subido un TXT, parsearlo (opcional)
+    if txt_file_path is not None:
+        info_txt = parse_initial_txt(txt_file_path)
+        print(f"TXT subido. Contiene {info_txt['num_lines']} líneas.")
+
+        # Aquí podrías usar esa info para modificar all_data, 
+        # o simplemente dejarlo como log.
+
+    # 3) Calcular/actualizar radios
     all_data = update_sequence_radii(all_data, CENTER)
 
-    # 5) Propagación / interpolación
+    # 4) Calibrar clusters, generando estimaciones
     all_data = calibrate_all_sequences(all_data, CENTER)
 
     return all_data
 
-def run_pipeline(json_file_obj, csv_file_obj):
+def generate_pix4d_csv(all_data):
     """
-    Toma los archivos subidos en Gradio, ejecuta pipeline, retorna:
-      - Plot final (Plotly)
-      - CSV final (para descargar)
+    Genera un CSV con formato Pix4D:
+      #Image, X, Y, Z, Omega, Phi, Kappa, SigmaHoriz, SigmaVert
+    Devolvemos bytes para que Gradio pueda ofrecerlo como descarga.
     """
-    if not json_file_obj:
-        return "ERROR: Debes subir un archivo JSON con las secuencias", None
-
-    # Leemos el JSON subido
-    with open(json_file_obj.name, "r", encoding="utf-8") as f:
-        json_str = f.read()
-
-    # 1..5) Corre pipeline
-    all_data = pipeline(json_str, csv_file_obj)
-
-    # 6) Generamos CSV Pix4D en memoria (usaremos io.StringIO)
-    output_csv_buffer = io.StringIO()
-    writer = csv.writer(output_csv_buffer, lineterminator="\n")
+    output_buffer = io.StringIO()
+    writer = csv.writer(output_buffer, lineterminator="\n")
     writer.writerow(["#Image", "X", "Y", "Z", "Omega", "Phi", "Kappa", "SigmaHoriz", "SigmaVert"])
 
-    # Usamos lógica de export sin necesidad de un path:
     for step_name, step_info in all_data.items():
         for item in step_info["items"]:
             fname = item["Filename"]
@@ -203,46 +198,60 @@ def run_pipeline(json_file_obj, csv_file_obj):
 
             writer.writerow([fname, x, y, z, Omega, Phi, Kappa, sigma_h, sigma_v])
 
-    # Convertimos a un "File-like" que Gradio pueda devolver
-    final_csv_bytes = output_csv_buffer.getvalue().encode("utf-8")
+    return output_buffer.getvalue().encode("utf-8")
 
-    # 7) Creamos la gráfica
+#########################
+# Integración con Gradio
+#########################
+
+def run_pipeline(txt_file_obj):
+    """
+    Función llamada por Gradio al pulsar "Ejecutar Pipeline".
+    Retorna:
+      - La figura Plotly
+      - Un archivo CSV final (para descargar)
+    """
+    if txt_file_obj is not None:
+        all_data = pipeline(txt_file_obj.name)
+    else:
+        # Si no se subió TXT, igual corremos pipeline
+        all_data = pipeline()
+
+    # Creamos el plot
     fig = create_plot(all_data)
 
-    return fig, final_csv_bytes
+    # Generamos CSV en memoria
+    csv_bytes = generate_pix4d_csv(all_data)
 
-#########################
-# Construcción de la UI
-#########################
+    return fig, (csv_bytes, "resultado_pix4d.csv")
 
 def launch_ui():
     with gr.Blocks(title="Carroponte Calibration Tool") as demo:
-        gr.Markdown("## Carroponte Calibration & Visualization")
+        gr.Markdown("# Carroponte Calibration & Visualization")
 
-        with gr.Row():
-            json_file = gr.File(label="Subir JSON (all_sequences_clustered.json)", file_types=['json'])
-            csv_file = gr.File(label="(Opcional) Subir CSV Pix4D calibrations")
+        # El JSON ya está en data/..., no lo pedimos.
+        # Solo subimos el TXT adicional, si se desea.
+        txt_file = gr.File(
+            label="(Opcional) Arrastra tu TXT inicial",
+            file_types=['text']
+        )
 
         run_btn = gr.Button("Ejecutar Pipeline")
-        plot_output = gr.Plot(label="Vista Plotly")
-        download_csv = gr.File(label="Descarga CSV Pix4D", interactive=False)
 
-        # Definimos la callback
-        def on_run_pipeline(jf, cf):
-            result = run_pipeline(jf, cf)
-            if isinstance(result, str):
-                # error
-                return gr.update(value=result), None
-            else:
-                fig, csv_data = result
-                # devuelvo la figura y un archivo "virtual" con el CSV
-                return fig, (csv_data, "resultado_pix4d.csv")
+        plot_output = gr.Plot(label="Visualización Plotly")
+        download_csv = gr.File(label="Descarga CSV Final", interactive=False)
 
-        # Conectamos el botón
-        run_btn.click(fn=on_run_pipeline, inputs=[json_file, csv_file], outputs=[plot_output, download_csv])
+        def on_run_pipeline(txt_f):
+            return run_pipeline(txt_f)
+
+        run_btn.click(
+            fn=on_run_pipeline,
+            inputs=[txt_file],
+            outputs=[plot_output, download_csv]
+        )
 
     return demo
 
 if __name__ == "__main__":
-    demo = launch_ui()
-    demo.launch()
+    demo_app = launch_ui()
+    demo_app.launch()
