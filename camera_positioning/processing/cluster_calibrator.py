@@ -46,12 +46,13 @@ def propagate_orientations_in_cluster(sequence_items, center):
     for img in sequence_items:
         if img.get("Calibration_Status") == "original":
             angle = math.degrees(math.atan2(img["Y"] - center[1], img["X"] - center[0]))
-            calibrated_orientations.append((angle, img["Kappa"]))
+            kappa = img.get("Kappa", 0.0)  # Evita KeyError asignando un valor por defecto
+            calibrated_orientations.append((angle, kappa))
 
     for item in sequence_items:
         if item.get("Calibration_Status") == "uncalibrated":
             estimated_kappa = infer_orientation_from_polar(item, center, sequence_items, calibrated_orientations)
-            item["Kappa"] = estimated_kappa
+            item["Kappa"] = estimated_kappa  # Ahora siempre existirá
             item["Calibration_Status"] = "estimated"
 
 def calibrate_clusters_in_sequence(step_info, center):
@@ -63,6 +64,10 @@ def calibrate_clusters_in_sequence(step_info, center):
     
     if not radius:
         return  # No hay radio definido, no podemos calcular bien
+
+    # Asegurar que todas las imágenes tengan un valor por defecto para "Kappa"
+    for item in items:
+        item.setdefault("Kappa", 0.0)
 
     # Agrupar por cluster
     cluster_map = defaultdict(list)

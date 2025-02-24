@@ -1,20 +1,20 @@
 import sys
-import os
-import numpy as np
 from pathlib import Path
+import numpy as np
+import math
 
-# Importa tus módulos
+# Importamos los módulos necesarios de tu repo
 from data.json_handler import load_sequences_json, save_sequences_json
-from data.json_handler import get_image_id_from_item, set_image_xyz
-from data.pix4d_import import load_pix4d_calibrations, apply_calibrations_to_json
+from data.pix4d_import import load_pix4d_pose_txt, apply_calibrations_to_json
 from data.pix4d_export import export_to_pix4d_csv
 from processing.cluster_calibrator import calibrate_all_sequences
 from config import CENTER
-import math
 
 def compute_sequence_radius(step_info, center):
     """
-    Calcula el radio mediano usando las imágenes 'original' (calibradas).
+    Calcula el radio basado en imágenes calibradas dentro de la secuencia.
+    Como todas las imágenes en una secuencia tienen el mismo radio,
+    tomamos la mediana de la distancia de las calibradas al centro.
     """
     distances = []
     for item in step_info["items"]:
@@ -25,13 +25,11 @@ def compute_sequence_radius(step_info, center):
                 dy = y - center[1]
                 dist = math.sqrt(dx*dx + dy*dy)
                 distances.append(dist)
-    if len(distances) == 0:
-        return None
-    return float(np.median(distances))
+    return float(np.median(distances)) if distances else None
 
 def update_sequence_radii(all_data, center):
     """
-    Para cada StepXX, si 'calculated_radius' no existe o es 0, lo calculamos.
+    Para cada StepXX, si no tiene radio definido, lo calculamos con las imágenes calibradas.
     """
     for step_name, step_info in all_data.items():
         radius = compute_sequence_radius(step_info, center)
@@ -40,44 +38,42 @@ def update_sequence_radii(all_data, center):
     return all_data
 
 def main():
-    if len(sys.argv) < 3:
-        print("Uso: python update_positions.py <pix4d_calib.csv> <output_csv>")
-        print("Ejemplo: python update_positions.py input/calibradas.csv output/final_pix4d.csv")
+    if len(sys.argv) < 2:
+        print("Uso: python update_positions.py <pix4d_pose.txt> [<output_csv>]")
         sys.exit(1)
-    
-    pix4d_csv_path = Path(sys.argv[1])
-    output_csv_path = Path(sys.argv[2])
 
-    # 1) Cargar JSON
-    print("[1] Cargando JSON...")
+    txt_path = Path(sys.argv[1])
+    if not txt_path.exists():
+        print(f"❌ Error: No se encontró el archivo {txt_path}")
+        sys.exit(1)
+
+    output_csv = "output/final_pix4d.csv"
+    if len(sys.argv) > 2:
+        output_csv = sys.argv[2]
+
+    print("🔹 [1] Cargando JSON principal...")
     all_data = load_sequences_json()
 
-    # 2) Cargar calibraciones Pix4D
-    print("[2] Cargando calibraciones de Pix4D...")
-    calibrations = load_pix4d_calibrations(pix4d_csv_path)
+    print(f"🔹 [2] Cargando poses calibradas desde {txt_path} ...")
+    calibrations = load_pix4d_pose_txt(txt_path)
 
-    # 3) Aplicar calibraciones a JSON
-    print("[3] Aplicando calibraciones...")
+    print("🔹 [3] Aplicando calibraciones al JSON...")
     all_data = apply_calibrations_to_json(all_data, calibrations)
 
-    # 4) Calcular radio secuencial (si no está definido)
-    print("[4] Calculando/actualizando radios de cada Step...")
+    print("🔹 [4] Calculando radios en cada secuencia...")
     all_data = update_sequence_radii(all_data, CENTER)
 
-    # 5) Propagar posiciones y orientaciones con cluster_calibrator
-    print("[5] Propagando estimaciones en cada Step/Cluster...")
-    from processing.cluster_calibrator import calibrate_all_sequences
+    print("🔹 [5] Propagando posiciones y orientación en cada cluster...")
     all_data = calibrate_all_sequences(all_data, CENTER)
 
-    # 6) Exportar CSV final para Pix4D
-    print(f"[6] Exportando CSV final => {output_csv_path}...")
-    export_to_pix4d_csv(all_data, output_csv_path)
+    print(f"🔹 [6] Exportando CSV final a {output_csv} ...")
+    export_to_pix4d_csv(all_data, output_csv)
 
-    # 7) Guardar JSON final
-    print("[7] Guardando JSON final con datos actualizados...")
+    print("🔹 [7] Guardando JSON actualizado...")
     save_sequences_json(all_data)
 
-    print("Proceso completado.")
+    print("✅ Proceso completo. CSV final disponible en output/.")
+    print("✅ JSON actualizado en data/ground_truth/all_sequences.json.")
 
 if __name__ == "__main__":
     main()
