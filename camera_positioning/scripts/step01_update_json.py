@@ -4,55 +4,44 @@ import os
 def parse_calibration_txt(txt_file_path):
     """
     Lee un archivo .txt que contiene datos de calibración para cada imagen.
-    Se espera que cada línea tenga la siguiente estructura (o similar):
+    Se espera que la primera línea sea la cabecera:
     
-        ImageNumber  X   Y   Z   Omega   Phi   Kappa
-    
-    Se puede ajustar según el formato real de tu .txt.
+        imageName  X   Y   Z   Omega   Phi   Kappa
     
     Retorna:
-        dict con clave = ImageNumber (str) y valor = {
+        dict con clave = Filename (str) y valor = {
             "X": float,
             "Y": float,
             "Z": float,
-            "Omega": float (opt),
-            "Phi": float (opt),
-            "Kappa": float (opt)
+            "Omega": float,
+            "Phi": float,
+            "Kappa": float
         }
     """
     calibration_data = {}
-    
+
     with open(txt_file_path, "r", encoding="utf-8") as f:
         lines = f.readlines()
-    
-    # Asumiendo que la primera línea puede ser cabecera; si no, se ajusta
-    # Por ejemplo: "ImageNumber  X  Y  Z  Omega  Phi  Kappa"
-    header = True
+
+    header = True  # Ignoramos la primera línea
     for line in lines:
-        # Si hay cabecera, la saltamos y seteamos header=False
         if header:
             header = False
             continue
-        
+
         parts = line.strip().split()
-        # Se ajusta según la estructura que tengas en tu txt
-        # Ejemplo: 4335  3.4512  -1.1098  5.62   -0.01   0.02   180.5
-        if len(parts) < 4:
-            continue  # al menos debe haber ID y 3 coords
+        if len(parts) < 7:
+            continue  # Aseguramos que hay suficientes columnas
         
-        image_id = parts[0].strip()
-        
+        filename = parts[0].strip()  # Usamos el Filename completo como clave
         x = float(parts[1])
         y = float(parts[2])
         z = float(parts[3])
-        
-        # Omega, Phi, Kappa pueden o no existir
-        # Usamos un get index dentro de 'parts' si está disponible
-        omega = float(parts[4]) if len(parts) > 4 else 0.0
-        phi   = float(parts[5]) if len(parts) > 5 else 0.0
-        kappa = float(parts[6]) if len(parts) > 6 else 0.0
-        
-        calibration_data[image_id] = {
+        omega = float(parts[4])
+        phi   = float(parts[5])
+        kappa = float(parts[6])
+
+        calibration_data[filename] = {
             "X": x,
             "Y": y,
             "Z": z,
@@ -60,63 +49,93 @@ def parse_calibration_txt(txt_file_path):
             "Phi": phi,
             "Kappa": kappa,
         }
-    
+
     return calibration_data
 
 
-def update_json_with_calibration(
-    json_input_path, 
-    json_output_path, 
-    calibration_data,
-    image_identifier_key="ImageNumber"
-):
+def update_json_with_calibration(json_input_path, json_output_path, calibration_data):
     """
-    Carga un JSON de secuencias (StepXX), actualiza las imágenes con la info
-    presente en `calibration_data` (dict con coords y orientación),
-    y guarda un nuevo archivo JSON.
-
-    - `image_identifier_key` indica qué campo en el JSON corresponde a la
-      llave para cruzar datos (por ejemplo, "ImageNumber" o "Filename").
-    - Si la imagen está en `calibration_data`, se actualizan X, Y, Z y orientaciones
-      y se setea `Calibration_Status = "calibrated"`.
-    - Si no está, se setea `Calibration_Status = "uncalibrated"`.
+    Carga un JSON, actualiza coordenadas y orientación de imágenes calibradas
+    usando 'Filename' como identificador.
     """
-    # 1. Cargar el JSON
     with open(json_input_path, "r", encoding="utf-8") as f:
         sequences_data = json.load(f)
-    
-    # 2. Recorrer cada secuencia
+
+    updated_count = 0
+    missing_count = 0
+    max_logs = 10  # Limitamos la cantidad de prints
+
+    update_logs = []
+    missing_logs = []
+
     for step_name, step_info in sequences_data.items():
-        # Verificar que haya items
         items = step_info.get("items", [])
-        
+
         for item in items:
-            # Identificamos la imagen
-            image_id = str(item.get(image_identifier_key, "")).strip()
-            
-            if image_id in calibration_data:
-                # => Imagen aparece en .txt => Actualizamos coords y orientación
-                cal_info = calibration_data[image_id]
+            filename = item.get("Filename", "").strip()  # Usamos Filename como clave
+
+            if filename in calibration_data:
+                cal_info = calibration_data[filename]
+
+                if updated_count < max_logs:
+                    update_logs.append(f"✅ {filename}: {cal_info}")
+
                 item["X"] = cal_info["X"]
                 item["Y"] = cal_info["Y"]
                 item["Z"] = cal_info["Z"]
-                
-                # Guardamos Omega/Phi/Kappa si quieres:
-                item["Omega"] = cal_info.get("Omega", 0.0)
-                item["Phi"]   = cal_info.get("Phi", 0.0)
-                item["Kappa"] = cal_info.get("Kappa", 0.0)
-
-                # Actualizamos estado
+                item["Omega"] = cal_info["Omega"]
+                item["Phi"]   = cal_info["Phi"]
+                item["Kappa"] = cal_info["Kappa"]
                 item["Calibration_Status"] = "calibrated"
+                updated_count += 1
             else:
-                # => Imagen NO aparece en .txt => uncalibrated
+                if missing_count < max_logs:
+                    missing_logs.append(f"❌ No en TXT: {filename}")
                 item["Calibration_Status"] = "uncalibrated"
+                missing_count += 1
+
+    # 📌 Mostrar resumen en consola
+    print("\n📌 **Primeros 10 valores actualizados:**")
+    for log in update_logs[:max_logs]: 
+        print(log)
     
-    # 3. Guardar el JSON actualizado
+    print("\n📌 **Últimos 10 valores actualizados:**")
+    for log in update_logs[-max_logs:]: 
+        print(log)
+
+    print("\n⚠️ **Primeros 10 IDs que no fueron encontrados en TXT:**")
+    for log in missing_logs[:max_logs]: 
+        print(log)
+
+    print(f"\n✅ Total imágenes actualizadas: {updated_count}")
+    print(f"❌ Total imágenes NO encontradas en TXT: {missing_count}")
+
+    # Guardar JSON actualizado
     with open(json_output_path, "w", encoding="utf-8") as f:
         json.dump(sequences_data, f, indent=4)
-    
-    print(f"JSON actualizado y guardado en: {json_output_path}")
+
+    print(f"JSON actualizado en: {json_output_path}")
+
+
+#############################################
+# FUNCIÓN PRINCIPAL que llamarás desde main.py
+#############################################
+def run_step01(txt_path, json_in_path, json_out_path, image_identifier="ImageNumber"):
+    """
+    Ejecuta Step01: 
+      1) Parsea el archivo .txt de calibración.
+      2) Actualiza el JSON.
+      3) Retorna un mensaje de estado final.
+    """
+    # 1) Parsear el .txt
+    calibration_dict = parse_calibration_txt(txt_path)
+    # 2) Actualizar el JSON
+    update_json_with_calibration(
+        json_in_path,
+        json_out_path,
+        calibration_dict
+    )
+    return f"✅ Step01 completado. Datos actualizados en {json_out_path}"
 
 
 def main():
@@ -137,7 +156,7 @@ def main():
     calibration_dict = parse_calibration_txt(txt_file)
     
     # 2) Actualizar el JSON
-    update_json_with_calibration(json_in, json_out, calibration_dict, image_identifier_key="ImageNumber")
+    update_json_with_calibration(json_in, json_out, calibration_dict)
 
 
 if __name__ == "__main__":

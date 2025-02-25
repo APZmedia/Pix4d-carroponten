@@ -4,57 +4,63 @@ import os
 # Importamos las funciones de cada step
 from scripts.step01_update_json import run_step01
 from scripts.step02_visualize import run_step02
-#from scripts.step03_estimate_center import run_step03
-#from scripts.step04_visual_calib import run_step04
-#from scripts.step05_interpolation import run_step05
-#from scripts.step06_orientation_propagation import run_step06
-#from scripts.step07_display_comparison import run_step07
-#from scripts.step08_export_csv import run_step08
+from scripts.step03_estimate_center import estimate_center_and_radius
 
 def step01_handler(txt_file, input_json_path, output_json_path):
     """
-    Función de callback para Step01 (Update JSON with .txt).
+    Maneja la ejecución del Step01 (Actualización de JSON con el TXT subido).
     """
     if txt_file is None:
         return "❌ Error: No se cargó ningún archivo .txt."
-    if not input_json_path.strip():
-        return "❌ Error: Falta ruta JSON de entrada."
-    if not output_json_path.strip():
-        return "❌ Error: Falta ruta JSON de salida."
-
-    # Guardamos el archivo txt en /uploads
-    os.makedirs("uploads", exist_ok=True)
-    txt_file_path = os.path.join("uploads", txt_file.name)
-    with open(txt_file_path, "wb") as f:
-        f.write(txt_file.read())
     
-    # Llamamos la función principal del step
+    if not input_json_path.strip():
+        return "❌ Error: No se especificó el JSON de entrada."
+    
+    if not output_json_path.strip():
+        return "❌ Error: No se especificó el JSON de salida."
+    
+    # Gradio proporciona un objeto con la ruta del archivo subido
+    txt_file_path = txt_file.name
+
+    # Llamamos a `run_step01`, pasándole la ruta directamente
     try:
         result_msg = run_step01(txt_file_path, input_json_path, output_json_path)
         return "✅ " + result_msg
     except Exception as e:
-        return f"❌ Ocurrió un error: {e}"
+        return f"❌ Ocurrió un error actualizando el JSON: {e}"
 
 
 def step02_handler(json_file_path, txt_file_path):
     """
     Función de callback para Step02 (Visualización).
-    Debe retornar la figura Plotly (o un error).
+    Genera dos gráficos comparativos: uno para el JSON y otro para el TXT.
     """
-    import plotly
-    import plotly.graph_objects as go
-
     if not json_file_path.strip():
-        return None, "❌ Error: Falta JSON path."
+        return None, None, "❌ Error: Falta JSON path."
     if not txt_file_path.strip():
-        return None, "❌ Error: Falta TXT path."
+        return None, None, "❌ Error: Falta TXT path."
     
     try:
-        fig = run_step02(json_file_path, txt_file_path)
-        # Para Gradio, devolvemos la figura Plotly y un mensaje
-        return fig, "✅ Gráfico generado correctamente."
+        fig_json, fig_txt = run_step02(json_file_path, txt_file_path)  # ✅ Generamos dos gráficos
+        return fig_json, fig_txt, "✅ Gráficos generados correctamente."
     except Exception as e:
-        return None, f"❌ Error generando visualización: {e}"
+        return None, None, f"❌ Error generando visualización: {e}"
+
+def step03_handler(input_json_path, output_json_path):
+    """
+    Función de callback para Step03 (Cálculo del centro y radio por secuencia).
+    """
+    if not input_json_path.strip():
+        return "❌ Error: Falta JSON path de entrada."
+    
+    if not output_json_path.strip():
+        return "❌ Error: Falta JSON path de salida."
+    
+    try:
+        estimate_center_and_radius(input_json_path, output_json_path)
+        return f"✅ Centros y radios estimados guardados en {output_json_path}"
+    except Exception as e:
+        return f"❌ Error estimando el centro: {e}"
 
 def launch_ui():
     with gr.Blocks(title="Pipeline Carroponte") as demo:
@@ -65,7 +71,7 @@ def launch_ui():
             with gr.Tab("Step 01: Update JSON"):
                 gr.Markdown("### 1) Cargar un archivo .txt y actualizar el JSON con coordenadas calibradas")
                 txt_file_input = gr.File(label="Archivo .txt", file_types=[".txt"])
-                json_in_text   = gr.Textbox(label="Ruta JSON de entrada", value="data/ground_truth/all_sequences.json")
+                json_in_text   = gr.Textbox(label="Ruta JSON de entrada", value="data/ground_truth/all_sequences_clustered_updated.json")
                 json_out_text  = gr.Textbox(label="Ruta JSON de salida", value="data/ground_truth/all_sequences_updated.json")
                 run_btn_step01 = gr.Button("Actualizar JSON")
                 status_step01  = gr.Textbox(label="Resultado", interactive=False)
@@ -76,30 +82,44 @@ def launch_ui():
                     outputs=[status_step01]
                 )
             
-            # Step 02
+            # Step 02 (✅ AHORA LOS GRÁFICOS ESTÁN UNO AL LADO DEL OTRO)
             with gr.Tab("Step 02: Visualizar JSON & TXT"):
-                gr.Markdown("### 2) Visualizar JSON y TXT lado a lado")
+                gr.Markdown("### 2) Comparación de posiciones en JSON y TXT")
+                
                 json_path_box = gr.Textbox(label="Ruta JSON", value="data/ground_truth/all_sequences_updated.json")
-                txt_path_box  = gr.Textbox(label="Ruta TXT", value="uploads/calib_data.txt")
+                txt_path_box  = gr.Textbox(label="Ruta TXT", value="input/XPR-finalmerge05 rebuild_calibrated_external_camera_parameters.txt")
+                
                 run_btn_step02 = gr.Button("Visualizar")
+
+                # 📌 Layout de dos columnas para mostrar los gráficos lado a lado
+                with gr.Row():
+                    plot_output_json = gr.Plot(label="Visualización JSON")
+                    plot_output_txt  = gr.Plot(label="Visualización TXT")
                 
-                plot_output = gr.Plot(label="Gráfico Comparativo")
                 status_step02 = gr.Textbox(label="Resultado", interactive=False)
-                
+
+                # Conectar botón con la función de visualización
                 run_btn_step02.click(
                     fn=step02_handler,
                     inputs=[json_path_box, txt_path_box],
-                    outputs=[plot_output, status_step02]
+                    outputs=[plot_output_json, plot_output_txt, status_step02]
                 )
-            
+
             # Step 03
             with gr.Tab("Step 03: Estimar Centro y Radio"):
-                gr.Markdown("### 3) Aquí iría la lógica para estimar el centro & radio (circle_estimator)")
-                # Inputs y botón para step03
-                # run_btn_step03 = ...
-                # status_step03  = ...
-                # O un placeholder
-                gr.Markdown("_(Placeholder)_")
+                gr.Markdown("### 3) Calcular el centro y el radio de cada secuencia a partir de imágenes calibradas.")
+                
+                json_in_text_step03   = gr.Textbox(label="Ruta JSON de entrada", value="data/ground_truth/all_sequences_updated.json")
+                json_out_text_step03  = gr.Textbox(label="Ruta JSON de salida", value="data/ground_truth/all_sequences_with_center.json")
+                
+                run_btn_step03 = gr.Button("Calcular Centro y Radio")
+                status_step03  = gr.Textbox(label="Resultado", interactive=False)
+
+                run_btn_step03.click(
+                    fn=step03_handler,
+                    inputs=[json_in_text_step03, json_out_text_step03],
+                    outputs=[status_step03]
+                )
 
             # Step 04
             with gr.Tab("Step 04: Calibración Visual"):
