@@ -1,118 +1,134 @@
-import sys
+import gradio as gr
 import os
-from pathlib import Path
 
-# Importa los módulos del pipeline
-from data.json_handler import load_sequences_json, save_sequences_json
-from processing.cluster_calibrator import calibrate_all_sequences
-from config import CENTER
-from ui.ui_app import launch_ui  # Importamos la UI
+# Importamos las funciones de cada step
+from scripts.step01_update_json import run_step01
+from scripts.step02_visualize import run_step02
+#from scripts.step03_estimate_center import run_step03
+#from scripts.step04_visual_calib import run_step04
+#from scripts.step05_interpolation import run_step05
+#from scripts.step06_orientation_propagation import run_step06
+#from scripts.step07_display_comparison import run_step07
+#from scripts.step08_export_csv import run_step08
 
-import json
-import csv
-import io
-
-#########################
-# Funciones del pipeline CLI
-#########################
-
-def parse_initial_txt(txt_path):
+def step01_handler(txt_file, input_json_path, output_json_path):
     """
-    Procesa el archivo TXT inicial. Modifícalo según la lógica que necesites.
+    Función de callback para Step01 (Update JSON with .txt).
     """
-    with open(txt_path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-    return {
-        "num_lines": len(lines),
-        "lines": lines
-    }
+    if txt_file is None:
+        return "❌ Error: No se cargó ningún archivo .txt."
+    if not input_json_path.strip():
+        return "❌ Error: Falta ruta JSON de entrada."
+    if not output_json_path.strip():
+        return "❌ Error: Falta ruta JSON de salida."
 
-def compute_sequence_radius(step_info, center):
+    # Guardamos el archivo txt en /uploads
+    os.makedirs("uploads", exist_ok=True)
+    txt_file_path = os.path.join("uploads", txt_file.name)
+    with open(txt_file_path, "wb") as f:
+        f.write(txt_file.read())
+    
+    # Llamamos la función principal del step
+    try:
+        result_msg = run_step01(txt_file_path, input_json_path, output_json_path)
+        return "✅ " + result_msg
+    except Exception as e:
+        return f"❌ Ocurrió un error: {e}"
+
+
+def step02_handler(json_file_path, txt_file_path):
     """
-    Calcula el radio usando imágenes calibradas.
+    Función de callback para Step02 (Visualización).
+    Debe retornar la figura Plotly (o un error).
     """
-    import numpy as np
-    distances = [
-        np.linalg.norm([item["X"] - center[0], item["Y"] - center[1]])
-        for item in step_info["items"]
-        if item.get("Calibration_Status") == "original" and item.get("X") is not None
-    ]
-    return float(np.median(distances)) if distances else None
+    import plotly
+    import plotly.graph_objects as go
 
-def update_sequence_radii(all_data, center):
-    """
-    Para cada secuencia, si no tiene radio, lo calcula.
-    """
-    for step_name, step_info in all_data.items():
-        radius = compute_sequence_radius(step_info, center)
-        if radius is not None:
-            step_info["calculated_radius"] = radius
-    return all_data
+    if not json_file_path.strip():
+        return None, "❌ Error: Falta JSON path."
+    if not txt_file_path.strip():
+        return None, "❌ Error: Falta TXT path."
+    
+    try:
+        fig = run_step02(json_file_path, txt_file_path)
+        # Para Gradio, devolvemos la figura Plotly y un mensaje
+        return fig, "✅ Gráfico generado correctamente."
+    except Exception as e:
+        return None, f"❌ Error generando visualización: {e}"
 
-def run_pipeline_cli(txt_path=None):
-    """
-    Ejecuta el pipeline en modo CLI sin UI.
-    """
-    print("[1] Cargando JSON desde data/ground_truth/all_sequences.json...")
-    all_data = load_sequences_json()
+def launch_ui():
+    with gr.Blocks(title="Pipeline Carroponte") as demo:
+        gr.Markdown("# Herramienta Principal - Carroponte")
+        
+        with gr.Tabs():
+            # Step 01
+            with gr.Tab("Step 01: Update JSON"):
+                gr.Markdown("### 1) Cargar un archivo .txt y actualizar el JSON con coordenadas calibradas")
+                txt_file_input = gr.File(label="Archivo .txt", file_types=[".txt"])
+                json_in_text   = gr.Textbox(label="Ruta JSON de entrada", value="data/ground_truth/all_sequences.json")
+                json_out_text  = gr.Textbox(label="Ruta JSON de salida", value="data/ground_truth/all_sequences_updated.json")
+                run_btn_step01 = gr.Button("Actualizar JSON")
+                status_step01  = gr.Textbox(label="Resultado", interactive=False)
+                
+                run_btn_step01.click(
+                    fn=step01_handler,
+                    inputs=[txt_file_input, json_in_text, json_out_text],
+                    outputs=[status_step01]
+                )
+            
+            # Step 02
+            with gr.Tab("Step 02: Visualizar JSON & TXT"):
+                gr.Markdown("### 2) Visualizar JSON y TXT lado a lado")
+                json_path_box = gr.Textbox(label="Ruta JSON", value="data/ground_truth/all_sequences_updated.json")
+                txt_path_box  = gr.Textbox(label="Ruta TXT", value="uploads/calib_data.txt")
+                run_btn_step02 = gr.Button("Visualizar")
+                
+                plot_output = gr.Plot(label="Gráfico Comparativo")
+                status_step02 = gr.Textbox(label="Resultado", interactive=False)
+                
+                run_btn_step02.click(
+                    fn=step02_handler,
+                    inputs=[json_path_box, txt_path_box],
+                    outputs=[plot_output, status_step02]
+                )
+            
+            # Step 03
+            with gr.Tab("Step 03: Estimar Centro y Radio"):
+                gr.Markdown("### 3) Aquí iría la lógica para estimar el centro & radio (circle_estimator)")
+                # Inputs y botón para step03
+                # run_btn_step03 = ...
+                # status_step03  = ...
+                # O un placeholder
+                gr.Markdown("_(Placeholder)_")
 
-    if txt_path:
-        print(f"[2] Procesando archivo TXT: {txt_path}...")
-        txt_info = parse_initial_txt(txt_path)
-        print(f"TXT contiene {txt_info['num_lines']} líneas.")
+            # Step 04
+            with gr.Tab("Step 04: Calibración Visual"):
+                gr.Markdown("### 4) Calibrar imágenes no calibradas usando ‘visual match IDs to columns.csv’")
+                gr.Markdown("_(Placeholder)_")
+            
+            # Step 05
+            with gr.Tab("Step 05: Interpolación"):
+                gr.Markdown("### 5) Interpolación homogénea entre imágenes calibradas")
+                gr.Markdown("_(Placeholder)_")
+            
+            # Step 06
+            with gr.Tab("Step 06: Orientación"):
+                gr.Markdown("### 6) Propagar orientación con OrientationCorrector")
+                gr.Markdown("_(Placeholder)_")
+            
+            # Step 07
+            with gr.Tab("Step 07: Comparación final"):
+                gr.Markdown("### 7) Mostrar posiciones/orientaciones: original vs ‘visually calibrated’ vs ‘estimated’")
+                gr.Markdown("_(Placeholder)_")
+            
+            # Step 08
+            with gr.Tab("Step 08: Exportar CSV"):
+                gr.Markdown("### 8) Exportar CSV con posición y orientación en formato 4D")
+                gr.Markdown("_(Placeholder)_")
+    
+    return demo
 
-    print("[3] Calculando radios de cada secuencia...")
-    all_data = update_sequence_radii(all_data, CENTER)
-
-    print("[4] Ejecutando calibración de clusters...")
-    all_data = calibrate_all_sequences(all_data, CENTER)
-
-    print("[5] Guardando JSON actualizado...")
-    save_sequences_json(all_data)
-
-    output_csv_path = "output/final_pix4d.csv"
-    print(f"[6] Generando CSV en {output_csv_path}...")
-    generate_pix4d_csv(all_data, output_csv_path)
-
-    print("✅ Proceso completado. Revisa la carpeta output/ para el CSV final.")
-
-def generate_pix4d_csv(all_data, output_csv_path):
-    """
-    Genera un CSV con formato Pix4D.
-    """
-    with open(output_csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["#Image", "X", "Y", "Z", "Omega", "Phi", "Kappa", "SigmaHoriz", "SigmaVert"])
-
-        for step_name, step_info in all_data.items():
-            for item in step_info["items"]:
-                fname = item["Filename"]
-                x = float(item.get("X", 0.0))
-                y = float(item.get("Y", 0.0))
-                z = float(item.get("Z", 0.0))
-                Omega = float(item.get("Omega", 0.0))
-                Phi = float(item.get("Phi", 0.0))
-                Kappa = float(item.get("Kappa", 0.0))
-
-                status = item.get("Calibration_Status", "uncalibrated")
-                sigma_h, sigma_v = (0.5, 0.2) if status == "original" else (2.0, 0.2) if status == "estimated" else (5.0, 1.0)
-
-                writer.writerow([fname, x, y, z, Omega, Phi, Kappa, sigma_h, sigma_v])
-
-#########################
-# Lógica de ejecución
-#########################
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        # Si se pasa un argumento (TXT), ejecutamos en modo CLI
-        txt_file = sys.argv[1]
-        if not Path(txt_file).exists():
-            print(f"❌ Error: No se encontró el archivo {txt_file}")
-            sys.exit(1)
-        run_pipeline_cli(txt_file)
-    else:
-        # Si no hay argumentos, lanzamos la UI
-        print("🖥 Iniciando UI interactiva con Gradio...")
-        demo_app = launch_ui()
-        demo_app.launch()
+    app = launch_ui()
+    app.launch()
