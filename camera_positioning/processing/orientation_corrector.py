@@ -1,45 +1,45 @@
 import math
 import numpy as np
-from data.json_handler import find_item_by_id
 
 def infer_orientation_from_polar(image_item, center, sequence_items):
     """
-    Calcula una orientación estimada basada en la posición polar con respecto al centro.
-    Se ajusta usando la orientación de imágenes calibradas dentro de la misma secuencia.
+    Calcula una orientación estimada basada en la posición polar con respecto al centro de la grúa.
+    Ajusta la orientación usando la diferencia promedio entre Theta y Kappa en imágenes calibradas.
 
-    image_item: Dict con la imagen no calibrada.
+    image_item: Diccionario con los datos de la imagen sin calibrar.
     center: Centro de la grúa en coordenadas [cx, cy].
-    sequence_items: Lista de todas las imágenes en la secuencia actual.
+    sequence_items: Lista de todas las imágenes en la misma secuencia.
 
     Retorna el ángulo estimado en grados (yaw/Kappa).
     """
 
-    # 1. Calcular el ángulo en coordenadas polares
+    # 1️⃣ Calcular el ángulo en coordenadas polares basado en la posición XY
     x, y = image_item.get("X", 0.0), image_item.get("Y", 0.0)
     dx, dy = x - center[0], y - center[1]
-    polar_angle = math.degrees(math.atan2(dy, dx))  # Angulo en coordenadas polares
+    polar_angle = math.degrees(math.atan2(dy, dx)) % 360  # Convertimos a rango 0-360
 
-    # 2. Buscar imágenes calibradas en la misma secuencia
+    # 2️⃣ Buscar imágenes originales calibradas en la misma secuencia
     calibrated_orientations = []
     for img in sequence_items:
         if img.get("Calibration_Status") == "original":
-            calibrated_orientations.append((img["computed_angle"], img["Kappa"]))
+            # Asegurar que existan datos para la calibración
+            theta = img.get("Theta", None)
+            kappa = img.get("Kappa", None)
+            if theta is not None and kappa is not None:
+                calibrated_orientations.append((theta, kappa))
 
-    # 3. Si hay imágenes calibradas, ajustar con la diferencia promedio
+    # 3️⃣ Si hay imágenes calibradas, calcular la diferencia media entre Theta y Kappa
     if calibrated_orientations:
-        diffs = []
-        for cal_angle, cal_kappa in calibrated_orientations:
-            diff = cal_kappa - cal_angle  # Diferencia entre la orientación real y el ángulo polar
-            diffs.append(diff)
-        
-        if diffs:
-            avg_diff = np.median(diffs)  # Tomamos la mediana para mayor estabilidad
-        else:
-            avg_diff = 0.0
-    else:
-        avg_diff = 0.0  # Si no hay calibradas, asumimos 0° de ajuste
+        diffs = [kappa - theta for theta, kappa in calibrated_orientations]
 
-    # 4. Aplicar corrección promedio
+        if len(diffs) >= 3:
+            avg_diff = np.median(diffs)  # Mediana para evitar valores atípicos
+        else:
+            avg_diff = np.mean(diffs)  # Media si hay pocos datos
+    else:
+        avg_diff = 0.0  # Si no hay calibradas, asumimos sin corrección
+
+    # 4️⃣ Aplicar corrección y asegurar continuidad de rotación
     estimated_kappa = (polar_angle + avg_diff) % 360
 
-    return estimated_kappa  # Devolvemos la orientación corregida
+    return estimated_kappa  # Retornamos el valor corregido
