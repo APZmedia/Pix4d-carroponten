@@ -8,7 +8,8 @@ from scripts.step03_estimate_center import estimate_center_and_radius
 from scripts.step04_visual_calib import calibrate_visually
 from scripts.step05_interpolation import interpolate_positions
 from scripts.step05_verification import run_step05_verification
-
+from scripts.step06_orientation_propagation import propagate_orientation
+from scripts.step08_export_csv import run_step08
 
 def step01_handler(txt_file, input_json_path, output_json_path):
     """
@@ -116,7 +117,37 @@ def step05_verification_handler(json_file_path, txt_file_path):
     except Exception as e:
         return None, None, f"❌ Error generando visualización: {e}"
 
+def step06_handler(json_input_path, json_output_path):
+    """
+    Maneja la ejecución del Step06 (Propagación de Orientación).
+    """
+    if not json_input_path.strip():
+        return "❌ Error: No se especificó el JSON de entrada."
+    
+    if not json_output_path.strip():
+        return "❌ Error: No se especificó el JSON de salida."
 
+    try:
+        propagate_orientation(json_input_path, json_output_path)
+        return f"✅ Propagación de orientación completada. JSON guardado en {json_output_path}"
+    except Exception as e:
+        return f"❌ Error en la propagación de orientación: {e}"
+
+def step08_handler(json_input_path, csv_output_path):
+    """
+    Maneja la ejecución del Step08 (Exportación a CSV).
+    """
+    if not json_input_path.strip():
+        return "❌ Error: No se especificó el JSON de entrada."
+    
+    if not csv_output_path.strip():
+        return "❌ Error: No se especificó la ruta de salida del CSV."
+
+    try:
+        result_msg = run_step08(json_input_path, csv_output_path)
+        return result_msg
+    except Exception as e:
+        return f"❌ Error en la exportación a CSV: {e}"
 
 def launch_ui():
     with gr.Blocks(title="Pipeline Carroponte") as demo:
@@ -232,9 +263,20 @@ def launch_ui():
                 )
 
             # Step 06
-            with gr.Tab("Step 06: Orientación"):
-                gr.Markdown("### 6) Propagar orientación con OrientationCorrector")
-                gr.Markdown("_(Placeholder)_")
+            with gr.Tab("Step 06: Propagar Orientación"):
+                gr.Markdown("### 6) Propagar orientación con el patrón de rotación identificado en cada secuencia")
+                
+                json_input_path = gr.Textbox(label="Ruta JSON de entrada", value="data/ground_truth/all_sequences_interpolated.json")
+                json_output_path = gr.Textbox(label="Ruta JSON de salida", value="data/ground_truth/all_sequences_oriented.json")
+
+                run_btn_step06 = gr.Button("Propagar Orientación")
+                status_step06 = gr.Textbox(label="Resultado", interactive=False)
+
+                run_btn_step06.click(
+                    fn=step06_handler,
+                    inputs=[json_input_path, json_output_path],
+                    outputs=[status_step06]
+                )
             
             # Step 07
             with gr.Tab("Step 07: Comparación final"):
@@ -243,8 +285,19 @@ def launch_ui():
             
             # Step 08
             with gr.Tab("Step 08: Exportar CSV"):
-                gr.Markdown("### 8) Exportar CSV con posición y orientación en formato 4D")
-                gr.Markdown("_(Placeholder)_")
+                gr.Markdown("### 8) Exportar CSV con posición y orientación en formato Pix4D")
+
+                json_input_path = gr.Textbox(label="Ruta JSON de entrada", value="data/ground_truth/all_sequences_oriented.json")
+                csv_output_path = gr.Textbox(label="Ruta CSV de salida", value="data/ground_truth/pix4d_export.csv")
+
+                run_btn_step08 = gr.Button("Exportar a CSV")
+                status_step08 = gr.Textbox(label="Resultado", interactive=False)
+
+                run_btn_step08.click(
+                    fn=step08_handler,
+                    inputs=[json_input_path, csv_output_path],
+                    outputs=[status_step08]
+                )
     
     return demo
 

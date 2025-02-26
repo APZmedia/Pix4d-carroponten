@@ -6,7 +6,7 @@ import math
 # Importamos los módulos necesarios de tu repo
 from data.json_handler import load_sequences_json, save_sequences_json
 from data.pix4d_import import load_pix4d_pose_txt, apply_calibrations_to_json
-from data.pix4d_export import export_to_pix4d_csv
+from processing.pix4d_export import export_to_pix4d_csv
 from processing.cluster_calibrator import calibrate_all_sequences
 from config import CENTER
 
