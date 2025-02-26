@@ -55,8 +55,9 @@ def parse_calibration_txt(txt_file_path):
 
 def update_json_with_calibration(json_input_path, json_output_path, calibration_data):
     """
-    Carga un JSON, actualiza coordenadas y orientación de imágenes calibradas
-    usando 'Filename' como identificador.
+    Carga un JSON, actualiza coordenadas y orientación de imágenes basadas en el TXT.
+    - Si la imagen está en el TXT ➝ `Calibration_Status = "original"`
+    - Si la imagen NO está en el TXT ➝ `Calibration_Status = "uncalibrated"`
     """
     with open(json_input_path, "r", encoding="utf-8") as f:
         sequences_data = json.load(f)
@@ -86,11 +87,15 @@ def update_json_with_calibration(json_input_path, json_output_path, calibration_
                 item["Omega"] = cal_info["Omega"]
                 item["Phi"]   = cal_info["Phi"]
                 item["Kappa"] = cal_info["Kappa"]
-                item["Calibration_Status"] = "calibrated"
+
+                # 📌 Estado "original" si está en el TXT
+                item["Calibration_Status"] = "original"
                 updated_count += 1
             else:
                 if missing_count < max_logs:
                     missing_logs.append(f"❌ No en TXT: {filename}")
+                
+                # 📌 Estado "uncalibrated" si NO está en el TXT
                 item["Calibration_Status"] = "uncalibrated"
                 missing_count += 1
 
@@ -107,8 +112,8 @@ def update_json_with_calibration(json_input_path, json_output_path, calibration_
     for log in missing_logs[:max_logs]: 
         print(log)
 
-    print(f"\n✅ Total imágenes actualizadas: {updated_count}")
-    print(f"❌ Total imágenes NO encontradas en TXT: {missing_count}")
+    print(f"\n✅ Total imágenes marcadas como 'original': {updated_count}")
+    print(f"❌ Total imágenes marcadas como 'uncalibrated': {missing_count}")
 
     # Guardar JSON actualizado
     with open(json_output_path, "w", encoding="utf-8") as f:
@@ -120,7 +125,7 @@ def update_json_with_calibration(json_input_path, json_output_path, calibration_
 #############################################
 # FUNCIÓN PRINCIPAL que llamarás desde main.py
 #############################################
-def run_step01(txt_path, json_in_path, json_out_path, image_identifier="ImageNumber"):
+def run_step01(txt_path, json_in_path, json_out_path):
     """
     Ejecuta Step01: 
       1) Parsea el archivo .txt de calibración.
@@ -129,12 +134,14 @@ def run_step01(txt_path, json_in_path, json_out_path, image_identifier="ImageNum
     """
     # 1) Parsear el .txt
     calibration_dict = parse_calibration_txt(txt_path)
+
     # 2) Actualizar el JSON
     update_json_with_calibration(
         json_in_path,
         json_out_path,
         calibration_dict
     )
+    
     return f"✅ Step01 completado. Datos actualizados en {json_out_path}"
 
 

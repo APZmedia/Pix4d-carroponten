@@ -34,7 +34,7 @@ def estimate_center_and_radius(json_input_path, json_output_path):
 
         x_cal, y_cal = [], []
         for item in items:
-            if item.get("Calibration_Status") == "calibrated":
+            if item.get("Calibration_Status") == "original":
                 x_cal.append(item["X"])
                 y_cal.append(item["Y"])
 
@@ -56,7 +56,7 @@ def estimate_center_and_radius(json_input_path, json_output_path):
 
         x_cal, y_cal, z_cal = [], [], []
         for item in items:
-            if item.get("Calibration_Status") == "calibrated":
+            if item.get("Calibration_Status") == "original":
                 x_cal.append(item["X"])
                 y_cal.append(item["Y"])
                 z_cal.append(item["Z"])
