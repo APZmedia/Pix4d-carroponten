@@ -6,19 +6,22 @@ from processing.angular_transform import angle_to_xy
 def calculate_theta(x, y, center_x, center_y):
     """
     Calcula el ángulo Theta basado en la posición (X, Y) respecto al centro.
-    Devuelve el ángulo en grados dentro del rango [0, 360].
+    Devuelve el ángulo en grados dentro del rango [-180, 180].
     """
+    if x is None or y is None:
+        return None  # No calcular si no hay valores válidos
+
     theta_rad = np.arctan2(y - center_y, x - center_x)  # Ángulo en radianes
     theta_deg = np.degrees(theta_rad)  # Convertir a grados
-    return theta_deg % 360  # Asegurar que el ángulo está en [0, 360]
+    return theta_deg  # Mantener en [-180, 180]
 
 def calibrate_visually(json_input_path, csv_input_path, json_output_path):
     """
-    Calibra imágenes usando información del CSV con posiciones angulares.
-    1️⃣ Asigna Theta a las imágenes "original" basado en su (X, Y).
-    2️⃣ Asigna Theta a "visually calibrated" usando el CSV.
-    3️⃣ Interpola Theta en "estimated" basándose en imágenes calibradas.
-    4️⃣ Convierte Theta a (X, Y) para todas las imágenes.
+    Calibra imágenes no calibradas usando información del CSV con posiciones angulares.
+    1️⃣ Asigna Theta a "original" usando (X, Y).
+    2️⃣ Asigna Theta a "visually calibrated" desde el CSV.
+    3️⃣ NO modifica imágenes "uncalibrated".
+    4️⃣ Asigna X, Y, Z a "visually calibrated" usando Theta y el radio.
     """
     with open(json_input_path, "r", encoding="utf-8") as f:
         sequences_data = json.load(f)
@@ -27,6 +30,8 @@ def calibrate_visually(json_input_path, csv_input_path, json_output_path):
 
     sequence_columns = list(visual_matches.columns[1:-1])  # Todas las secuencias menos "LandmarkID" y "Theta"
     angle_column = "Theta"
+
+    print("\n📌 Iniciando Step 04: Verificación de Theta en imágenes 'original'")
 
     # 📌 Paso 1: Calcular Theta para "original" usando (X, Y)
     for step_name, step_info in sequences_data.items():
@@ -42,53 +47,45 @@ def calibrate_visually(json_input_path, csv_input_path, json_output_path):
 
                 if x is not None and y is not None:
                     item["Angular position"] = calculate_theta(x, y, center_x, center_y)
+                    print(f"🟠 {item.get('Filename', 'Unknown')}: Theta calculado = {item['Angular position']}°")
+                else:
+                    print(f"⚠️ {item.get('Filename', 'Unknown')}: No tiene X, Y para calcular Theta.")
+
+    print("\n📌 Verificación de Theta en imágenes 'visually calibrated'")
 
     # 📌 Paso 2: Asignar Theta a "visually calibrated" desde el CSV
     for step_name, step_info in sequences_data.items():
         if step_name not in sequence_columns:
             continue
 
-        for item in step_info.get("items", []):
-            if item.get("Calibration_Status") == "visually calibrated":
-                filename = item.get("Filename", "").strip()
-                match = visual_matches[visual_matches["LandmarkID"] == filename]
-
-                if not match.empty:
-                    item["Angular position"] = float(match[angle_column].values[0])
-
-    # 📌 Paso 3: Interpolar Theta para "estimated"
-    for step_name, step_info in sequences_data.items():
-        items = step_info.get("items", [])
-
-        calibrated_indices = [i for i, item in enumerate(items) if item.get("Calibration_Status") in ["original", "visually calibrated"]]
-        estimated_indices = [i for i, item in enumerate(items) if item.get("Calibration_Status") == "estimated"]
-
-        for idx in estimated_indices:
-            prev_idx = max([i for i in calibrated_indices if i < idx], default=None)
-            next_idx = min([i for i in calibrated_indices if i > idx], default=None)
-
-            if prev_idx is not None and next_idx is not None:
-                prev_theta = items[prev_idx]["Angular position"]
-                next_theta = items[next_idx]["Angular position"]
-                factor = (idx - prev_idx) / (next_idx - prev_idx)
-                items[idx]["Angular position"] = prev_theta + factor * (next_theta - prev_theta)
-
-    # 📌 Paso 4: Convertir Theta a coordenadas (X, Y)
-    for step_name, step_info in sequences_data.items():
-        if "axis_center" not in step_info or "calculated_radius" not in step_info:
+        if "axis_center" not in step_info or "calculated_radius" not in step_info or "calculated_z" not in step_info:
+            print(f"⚠️ No hay centro/radio/Z en {step_name}. Saltando...")
             continue
 
         center_x = step_info["axis_center"]["x"]
         center_y = step_info["axis_center"]["y"]
         radius = step_info["calculated_radius"]
+        z_value = step_info["calculated_z"]  # 📌 Usamos el Z_promedio de cada secuencia
 
         for item in step_info.get("items", []):
-            if "Angular position" in item:
-                theta = item["Angular position"]
-                x, y, _ = angle_to_xy(theta, radius)
+            if item.get("Calibration_Status") == "uncalibrated":
+                image_number = item.get("ImageNumber", None)
+                match = visual_matches[visual_matches[step_name] == image_number]
 
-                item["X"] = x
-                item["Y"] = y
+                if not match.empty:
+                    theta = float(match[angle_column].values[0])
+                    item["Angular position"] = theta
+                    item["Calibration_Status"] = "visually calibrated"
+
+                    # 📌 Convertir Theta en X, Y usando el radio
+                    x, y, _ = angle_to_xy(theta, radius)
+                    item["X"] = x
+                    item["Y"] = y
+                    item["Z"] = z_value  # 📌 Ahora cada imagen usa el Z de su secuencia
+
+                    print(f"🔵 {image_number}: Theta asignado = {theta}° → ({x:.3f}, {y:.3f}, {z_value:.3f})")
+
+    print("\n📌 Paso final: Verificación de Theta antes de guardar")
 
     # 📌 Guardar JSON actualizado
     with open(json_output_path, "w", encoding="utf-8") as f:
