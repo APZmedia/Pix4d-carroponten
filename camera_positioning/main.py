@@ -9,6 +9,7 @@ from scripts.step04_visual_calib import calibrate_visually
 from scripts.step05_interpolation import interpolate_positions
 from scripts.step05_verification import run_step05_verification
 from scripts.step06_orientation_propagation import propagate_orientation
+from scripts.step07_display_comparison import run_step07
 from scripts.step08_export_csv import run_step08
 
 def step01_handler(txt_file, input_json_path, output_json_path):
@@ -133,6 +134,22 @@ def step06_handler(json_input_path, json_output_path):
     except Exception as e:
         return f"❌ Error en la propagación de orientación: {e}"
 
+def step07_handler(json_file_path, txt_file_path):
+    """
+    Función de callback para Step07 (Comparación final de posiciones y orientación).
+    """
+    if not json_file_path.strip():
+        return None, None, "❌ Error: Falta JSON path."
+    if not txt_file_path.strip():
+        return None, None, "❌ Error: Falta TXT path."
+    
+    try:
+        fig_json, fig_txt = run_step07(json_file_path, txt_file_path)  # ✅ Generamos dos gráficos
+        return fig_json, fig_txt, "✅ Gráficos generados correctamente."
+    except Exception as e:
+        return None, None, f"❌ Error generando visualización: {e}"
+
+
 def step08_handler(json_input_path, csv_output_path):
     """
     Maneja la ejecución del Step08 (Exportación a CSV).
@@ -148,6 +165,22 @@ def step08_handler(json_input_path, csv_output_path):
         return result_msg
     except Exception as e:
         return f"❌ Error en la exportación a CSV: {e}"
+
+def step09_handler(json_input_path, json_output_path, lat_center, lon_center):
+    """
+    Maneja la ejecución del Step09 (Asignar coordenadas geográficas y exportar CSV).
+    """
+    if not json_input_path.strip():
+        return "❌ Error: No se especificó el JSON de entrada."
+    
+    if not json_output_path.strip():
+        return "❌ Error: No se especificó la ruta de salida del JSON."
+    
+    try:
+        result_msg = run_step09(json_input_path, json_output_path, lat_center, lon_center)
+        return result_msg
+    except Exception as e:
+        return f"❌ Error en la asignación de coordenadas: {e}"
 
 def launch_ui():
     with gr.Blocks(title="Pipeline Carroponte") as demo:
@@ -281,7 +314,21 @@ def launch_ui():
             # Step 07
             with gr.Tab("Step 07: Comparación final"):
                 gr.Markdown("### 7) Mostrar posiciones/orientaciones: original vs ‘visually calibrated’ vs ‘estimated’")
-                gr.Markdown("_(Placeholder)_")
+                json_path_box = gr.Textbox(label="Ruta JSON", value="data/ground_truth/all_sequences_oriented.json")
+                txt_path_box  = gr.Textbox(label="Ruta TXT", value="input/XPR-finalmerge05 rebuild_calibrated_external_camera_parameters.txt")
+                run_btn_step07 = gr.Button("Generar Comparación")
+                
+                with gr.Row():
+                    plot_output_json = gr.Plot(label="Visualización JSON")
+                    plot_output_txt  = gr.Plot(label="Visualización TXT")
+                
+                status_step07 = gr.Textbox(label="Resultado", interactive=False)
+
+                run_btn_step07.click(
+                    fn=step07_handler,
+                    inputs=[json_path_box, txt_path_box],
+                    outputs=[plot_output_json, plot_output_txt, status_step07]
+                )
             
             # Step 08
             with gr.Tab("Step 08: Exportar CSV"):
@@ -297,6 +344,22 @@ def launch_ui():
                     fn=step08_handler,
                     inputs=[json_input_path, csv_output_path],
                     outputs=[status_step08]
+                )
+            # Step 09
+            with gr.Tab("Step 09: Asignar Coordenadas Geográficas"):
+                gr.Markdown("### 9) Asignar latitud y longitud al centro de la posición de todas las imágenes")
+                json_input_path = gr.Textbox(label="Ruta JSON de entrada", value="data/ground_truth/all_sequences_oriented.json")
+                json_output_path = gr.Textbox(label="Ruta JSON de salida", value="data/ground_truth/all_sequences_georeferenced.json")
+                lat_center = gr.Number(label="Latitud del Centro", value=0.0)
+                lon_center = gr.Number(label="Longitud del Centro", value=0.0)
+                
+                run_btn_step09 = gr.Button("Asignar Coordenadas")
+                status_step09 = gr.Textbox(label="Resultado", interactive=False)
+
+                run_btn_step09.click(
+                    fn=step09_handler,
+                    inputs=[json_input_path, json_output_path, lat_center, lon_center],
+                    outputs=[status_step09]
                 )
     
     return demo

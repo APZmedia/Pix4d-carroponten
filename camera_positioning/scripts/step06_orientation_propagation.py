@@ -1,66 +1,83 @@
 import json
+import math
 import numpy as np
-from processing.angular_transform import angle_to_xy
-from processing.orientation_corrector import infer_orientation_from_polar
+import matplotlib.pyplot as plt
 
-def interpolate_orientation(theta, angles, values):
-    """Interpola Omega, Phi y Kappa asegurando continuidad en 360°."""
-    return np.interp(theta, angles, values, period=360)  # Maneja la rotación circular
+def normalize_angle(angle):
+    """Normaliza un ángulo a [0, 360)."""
+    return angle % 360
+
+def normalize_angle_diff(diff):
+    """Normaliza una diferencia angular al rango [-180, 180)."""
+    return ((diff + 180) % 360) - 180
+
+def ideal_tangent_angle(cx, cy, x, y):
+    """
+    Calcula el ángulo ideal de la tangente al círculo definido por (cx,cy) y la posición (x,y).
+    """
+    dx = x - cx
+    dy = y - cy
+    angle = math.degrees(math.atan2(dx, -dy))
+    return normalize_angle(angle)
+
+def compute_offsets(originals, cx, cy):
+    """
+    Calcula los offsets de Omega, Phi y Kappa comparando contra la orientación ideal.
+    """
+    offsets_omega, offsets_phi, offsets_kappa = [], [], []
+    for it in originals:
+        try:
+            x, y = float(it["X"]), float(it["Y"])
+            omega, phi, kappa = float(it["Omega"]), float(it["Phi"]), float(it["Kappa"])
+        except Exception:
+            continue
+        ideal_kappa = ideal_tangent_angle(cx, cy, x, y)
+        offsets_omega.append(omega)
+        offsets_phi.append(phi)
+        offsets_kappa.append(normalize_angle_diff(kappa - ideal_kappa))
+    return offsets_omega, offsets_phi, offsets_kappa
+
+def apply_offsets(items, cx, cy, median_omega, median_phi, median_kappa):
+    """
+    Aplica los offsets a las imágenes no originales para obtener la orientación corregida.
+    """
+    for it in items:
+        if it.get("Calibration_Status") in ["visually calibrated", "estimated"]:
+            try:
+                x, y = float(it["X"]), float(it["Y"])
+            except Exception:
+                continue
+            ideal_kappa = ideal_tangent_angle(cx, cy, x, y)
+            it["Omega"] = median_omega
+            it["Phi"] = median_phi
+            it["Kappa"] = normalize_angle(ideal_kappa + median_kappa)
+    return items
 
 def propagate_orientation(json_input_path, json_output_path):
     """
-    Propaga la orientación (Omega, Phi, Kappa) en imágenes 'visually calibrated' y 'estimated'
-    usando el patrón de rotación identificado en imágenes 'original', ajustando Kappa con modelo polar.
-    
-    Se asume que cada Step (step_info) tiene 'axis_center': {"x": ..., "y": ...} para usar como 'center'.
+    Corrige la orientación de imágenes no originales basándose en los offsets detectados en originales.
     """
     with open(json_input_path, "r", encoding="utf-8") as f:
-        sequences_data = json.load(f)
-
-    for step_name, step_info in sequences_data.items():
-        items = step_info.get("items", [])
-        
-        # Leer el 'center' de este Step desde axis_center. Asegúrate de que exista en el JSON.
-        axis_center = step_info.get("axis_center")
-        if not axis_center:
-            print(f"⚠️ En {step_name} no se encontró 'axis_center'; saltando propagación de orientación.")
-            continue
-        
-        # Conviértelo a la lista que necesites. Ej. [x, y] o [x, y, z] si aplica.
-        center = [axis_center["x"], axis_center["y"]]
-        
-        # Extraer datos de rotación (Omega, Phi, Kappa) de imágenes 'original'
-        original_items = [it for it in items if it.get("Calibration_Status") == "original"]
-        
-        # Para interpolar, necesitamos al menos 2 imágenes 'original'
-        if len(original_items) > 1:
-            # Extraer arrays con Theta, Omega, Phi y Kappa de esas imágenes
-            angles = np.array([it.get("Theta", 0.0) for it in original_items])
-            omegas = np.array([it.get("Omega", 0.0) for it in original_items])
-            phis   = np.array([it.get("Phi",  0.0) for it in original_items])
-            kappas = np.array([it.get("Kappa",0.0) for it in original_items])
-
-            for it in items:
-                status = it.get("Calibration_Status")
-                # Solo procesamos las que están 'visually calibrated' o 'estimated'
-                if status in ["visually calibrated", "estimated"]:
-                    theta = it.get("Theta")
-                    if theta is not None:
-                        # 1) Interpolar Omega y Phi en función de Theta
-                        it["Omega"] = interpolate_orientation(theta, angles, omegas)
-                        it["Phi"]   = interpolate_orientation(theta, angles, phis)
-
-                        # 2) Ajustar Kappa usando la lógica polar
-                        it["Kappa"] = infer_orientation_from_polar(it, center, original_items)
-
-                        print(f"🔄 {it.get('Filename', 'Unknown')} → "
-                              f"Omega: {it['Omega']:.3f}, Phi: {it['Phi']:.3f}, "
-                              f"Kappa ajustado: {it['Kappa']:.3f}")
+        data = json.load(f)
+    
+    for step, info in data.items():
+        if "axis_center" in info:
+            cx, cy = float(info["axis_center"]["x"]), float(info["axis_center"]["y"])
         else:
-            print(f"ℹ️ En {step_name} no hay suficientes 'original' para interpolar orientación (min 2).")
-
-    # Guardar JSON actualizado con la orientación propagada
+            print(f"Step {step}: No se encontró axis_center. Se omite.")
+            continue
+        items = info.get("items", [])
+        originals = [it for it in items if it.get("Calibration_Status") == "original"]
+        if not originals:
+            print(f"Step {step}: No hay originales válidas. Se omite.")
+            continue
+        offsets_omega, offsets_phi, offsets_kappa = compute_offsets(originals, cx, cy)
+        median_omega = np.median(offsets_omega) if offsets_omega else 0.0
+        median_phi = np.median(offsets_phi) if offsets_phi else 0.0
+        median_kappa = np.median(offsets_kappa) if offsets_kappa else 0.0
+        print(f"Step {step}: Offsets medianos -> Omega: {median_omega:.2f}°, Phi: {median_phi:.2f}°, Kappa: {median_kappa:.2f}°")
+        apply_offsets(items, cx, cy, median_omega, median_phi, median_kappa)
+    
     with open(json_output_path, "w", encoding="utf-8") as f:
-        json.dump(sequences_data, f, indent=4)
-
-    print(f"✅ Propagación de orientación completada. JSON guardado en {json_output_path}")
+        json.dump(data, f, indent=4)
+    print(f"✅ Propagación de orientación completada. Archivo guardado en {json_output_path}")

@@ -5,7 +5,8 @@ def export_to_pix4d_csv(all_data, output_csv):
     """
     Genera un CSV con las columnas:
     Filename, X, Y, Z, Omega, Phi, Kappa, SigmaHoriz, SigmaVert
-    ajustando los márgenes de error para Pix4D.
+    ajustando los márgenes de error para Pix4D, y exportando
+    únicamente imágenes con Calibration_Status == 'visually calibrated' o 'estimated'.
     """
     with open(output_csv, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -13,7 +14,13 @@ def export_to_pix4d_csv(all_data, output_csv):
 
         for step_name, step_info in all_data.items():
             for item in step_info["items"]:
-                filename = item["Filename"]
+                status = item.get("Calibration_Status", "uncalibrated")
+
+                # Filtrar: solo 'visually calibrated' o 'estimated'
+                if status not in ("visually calibrated", "estimated"):
+                    continue
+
+                filename = item.get("Filename", "Unnamed")
                 X = float(item.get("X", 0.0))
                 Y = float(item.get("Y", 0.0))
                 Z = float(item.get("Z", 0.0))
@@ -22,22 +29,18 @@ def export_to_pix4d_csv(all_data, output_csv):
                 Phi = float(item.get("Phi", 0.0))
                 Kappa = float(item.get("Kappa", 0.0))
 
-                # Definir márgenes ajustados
-                status = item.get("Calibration_Status", "uncalibrated")
-                if status == "original":
-                    sigma_h, sigma_v = 0.05, 0.02  # Márgenes muy bajos para originales
-                elif status == "visually calibrated":
-                    sigma_h, sigma_v = 1.0, 0.3  # Un poco más preciso que estimated
-                elif status == "estimated":
-                    sigma_h, sigma_v = 2.0, 0.5  # Márgenes mayores para estimadas
-                else:
-                    sigma_h, sigma_v = 5.0, 1.0  # Incertidumbre máxima para uncalibrated
+                # Definir márgenes según estado
+                if status == "visually calibrated":
+                    sigma_h, sigma_v = 1.0, 0.3
+                else:  # status == "estimated"
+                    sigma_h, sigma_v = 2.0, 0.5
 
                 writer.writerow([filename, X, Y, Z, Omega, Phi, Kappa, sigma_h, sigma_v])
 
 def run_step08(json_input_path, csv_output_path):
     """
-    Ejecuta Step 08: Exportar los datos a CSV en formato Pix4D.
+    Ejecuta Step 08: Exportar los datos a CSV en formato Pix4D
+    (solo 'visually calibrated' y 'estimated').
     """
     with open(json_input_path, "r", encoding="utf-8") as f:
         sequences_data = json.load(f)
