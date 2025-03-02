@@ -1,89 +1,61 @@
 import plotly.graph_objects as go
 import json
 import math
+import gradio as gr
 
-def get_common_axis_limits(x1, y1, x2, y2):
+def extract_positions_and_orientations(json_file_path, selected_sequences=None):
     """
-    Obtiene los límites comunes para los ejes X e Y.
+    Extrae posiciones y orientaciones de las cámaras desde el archivo JSON.
+    Filtra por secuencia si se proporciona una.
     """
-    x_min = min(min(x1), min(x2))
-    x_max = max(max(x1), max(x2))
-    y_min = min(min(y1), min(y2))
-    y_max = max(max(y1), max(y2))
-    
-    return x_min, x_max, y_min, y_max
-
-def extract_positions_and_orientations(json_file_path, txt_file_path):
-    """
-    Extrae posiciones y orientaciones de los archivos JSON y TXT.
-    """
-    # 📌 Leer JSON
     with open(json_file_path, "r", encoding="utf-8") as f:
         json_data = json.load(f)
 
-    json_x, json_y, json_u, json_v = [], [], [], []
+    x_positions, y_positions, u_vectors, v_vectors, categories = [], [], [], [], []
+    category_colors = {"original": "red", "visually calibrated": "green", "estimated": "blue"}
 
     for step_name, step_info in json_data.items():
+        if selected_sequences and step_name not in selected_sequences:
+            continue
+        
         for item in step_info.get("items", []):
-            if "X" in item and "Y" in item and "Kappa" in item and item["X"] is not None and item["Y"] is not None:
-                json_x.append(item["X"])
-                json_y.append(item["Y"])
+            if all(k in item for k in ["X", "Y", "Kappa", "Category"]):
+                x_positions.append(item["X"])
+                y_positions.append(item["Y"])
                 angle = math.radians(item["Kappa"])  # Convertir Kappa a radianes
-                
-                scale_factor = 5  # Aumentar la visibilidad de los vectores
-                json_u.append(math.cos(angle) * scale_factor)  # Componente X de la orientación
-                json_v.append(math.sin(angle) * scale_factor)  # Componente Y de la orientación
-
-    # 📌 Leer TXT
-    txt_x, txt_y, txt_u, txt_v = [], [], [], []
-
-    with open(txt_file_path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-
-    for line in lines[1:]:  # Saltamos la cabecera
-        parts = line.strip().split()
-        if len(parts) >= 4:
-            x = float(parts[1])
-            y = float(parts[2])
-            kappa = float(parts[3])  # Asumimos que el TXT tiene Kappa en la columna 4
-            txt_x.append(x)
-            txt_y.append(y)
-            
-            angle = math.radians(kappa)
-            txt_u.append(math.cos(angle) * scale_factor)
-            txt_v.append(math.sin(angle) * scale_factor)
-
-    return json_x, json_y, json_u, json_v, txt_x, txt_y, txt_u, txt_v
-
-def run_step07(json_file_path, txt_file_path):
-    """
-    Genera dos gráficos comparativos (JSON vs TXT) asegurando que tengan
-    la misma escala en los ejes X e Y e incluyendo la orientación.
-    """
-    # Extraer datos
-    json_x, json_y, json_u, json_v, txt_x, txt_y, txt_u, txt_v = extract_positions_and_orientations(json_file_path, txt_file_path)
-
-    # 📌 Obtener límites comunes para ambos gráficos
-    x_min, x_max, y_min, y_max = get_common_axis_limits(json_x, json_y, txt_x, txt_y)
-
-    # 📌 Crear gráfico JSON con vectores de orientación
-    fig_json = go.Figure()
-    fig_json.add_trace(go.Scatter(x=json_x, y=json_y, mode="markers", marker=dict(color="red"), name="JSON"))
-    fig_json.add_trace(go.Cone(x=json_x, y=json_y, u=json_u, v=json_v, sizemode="absolute", sizeref=1, colorscale="reds", name="Orientación JSON"))
+                scale_factor = 10  # Aumentamos la escala para mejorar la visibilidad
+                u_vectors.append(math.cos(angle) * scale_factor)
+                v_vectors.append(math.sin(angle) * scale_factor)
+                categories.append(category_colors.get(item["Category"], "gray"))
     
-    fig_json.update_layout(title="Visualización de posiciones y orientación - JSON",
-                           xaxis=dict(title="X", range=[x_min, x_max]), 
-                           yaxis=dict(title="Y", range=[y_min, y_max]),
-                           width=700, height=600)
+    return x_positions, y_positions, u_vectors, v_vectors, categories
 
-    # 📌 Crear gráfico TXT con vectores de orientación
-    fig_txt = go.Figure()
-    fig_txt.add_trace(go.Scatter(x=txt_x, y=txt_y, mode="markers", marker=dict(color="green"), name="TXT"))
-    fig_txt.add_trace(go.Cone(x=txt_x, y=txt_y, u=txt_u, v=txt_v, sizemode="absolute", sizeref=1, colorscale="greens", name="Orientación TXT"))
+def visualize_camera_positions(json_file_path, selected_sequences):
+    """
+    Genera un gráfico con las posiciones y orientaciones de las cámaras.
+    """
+    x_positions, y_positions, u_vectors, v_vectors, categories = extract_positions_and_orientations(json_file_path, selected_sequences)
+
+    fig = go.Figure()
     
-    fig_txt.update_layout(title="Visualización de posiciones y orientación - TXT",
-                          xaxis=dict(title="X", range=[x_min, x_max]), 
-                          yaxis=dict(title="Y", range=[y_min, y_max]),
-                          width=700, height=600)
-
-    return fig_json, fig_txt
+    # Agregar puntos de diferentes categorías con diferentes colores
+    for category, color in {"original": "red", "visually calibrated": "green", "estimated": "blue"}.items():
+        indices = [i for i, cat in enumerate(categories) if cat == color]
+        fig.add_trace(go.Scatter(
+            x=[x_positions[i] for i in indices],
+            y=[y_positions[i] for i in indices],
+            mode="markers",
+            marker=dict(color=color, size=4),
+            name=category
+        ))
+    
+    # Dibujar vectores de orientación como líneas con código de color
+    for x, y, u, v, color in zip(x_positions, y_positions, u_vectors, v_vectors, categories):
+        fig.add_trace(go.Scatter(x=[x, x + u], y=[y, y + v], mode='lines', line=dict(color=color, width=2), name="Orientación"))
+    
+    fig.update_layout(title="Visualización de posiciones y orientación de cámaras",
+                      xaxis=dict(title="X"),
+                      yaxis=dict(title="Y"),
+                      width=800, height=700)
+    
+    return fig

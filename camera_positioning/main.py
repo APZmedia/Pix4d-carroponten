@@ -9,7 +9,7 @@ from scripts.step04_visual_calib import calibrate_visually
 from scripts.step05_interpolation import interpolate_positions
 from scripts.step05_verification import run_step05_verification
 from scripts.step06_orientation_propagation import propagate_orientation
-from scripts.step07_display_comparison import run_step07
+from scripts.step07_display_comparison import visualize_camera_positions
 from scripts.step08_export_csv import run_step08
 
 def step01_handler(txt_file, input_json_path, output_json_path):
@@ -139,15 +139,15 @@ def step07_handler(json_file_path, txt_file_path):
     Función de callback para Step07 (Comparación final de posiciones y orientación).
     """
     if not json_file_path.strip():
-        return None, None, "❌ Error: Falta JSON path."
+        return None, "❌ Error: Falta JSON path."
     if not txt_file_path.strip():
-        return None, None, "❌ Error: Falta TXT path."
+        return None, "❌ Error: Falta TXT path."
     
     try:
-        fig_json, fig_txt = run_step07(json_file_path, txt_file_path)  # ✅ Generamos dos gráficos
-        return fig_json, fig_txt, "✅ Gráficos generados correctamente."
+        fig_json = visualize_camera_positions(json_file_path)
+        return fig_json, "✅ Gráficos generados correctamente."
     except Exception as e:
-        return None, None, f"❌ Error generando visualización: {e}"
+        return None, f"❌ Error generando visualización: {e}"
 
 
 def step08_handler(json_input_path, csv_output_path):
@@ -311,24 +311,24 @@ def launch_ui():
                     outputs=[status_step06]
                 )
             
-            # Step 07
+            #Step 07
             with gr.Tab("Step 07: Comparación final"):
                 gr.Markdown("### 7) Mostrar posiciones/orientaciones: original vs ‘visually calibrated’ vs ‘estimated’")
                 json_path_box = gr.Textbox(label="Ruta JSON", value="data/ground_truth/all_sequences_oriented.json")
-                txt_path_box  = gr.Textbox(label="Ruta TXT", value="input/XPR-finalmerge05 rebuild_calibrated_external_camera_parameters.txt")
+                sequence_filter = gr.CheckboxGroup(choices=[], label="Filtrar por Secuencias")
                 run_btn_step07 = gr.Button("Generar Comparación")
                 
                 with gr.Row():
                     plot_output_json = gr.Plot(label="Visualización JSON")
-                    plot_output_txt  = gr.Plot(label="Visualización TXT")
                 
                 status_step07 = gr.Textbox(label="Resultado", interactive=False)
-
+                
                 run_btn_step07.click(
                     fn=step07_handler,
-                    inputs=[json_path_box, txt_path_box],
-                    outputs=[plot_output_json, plot_output_txt, status_step07]
+                    inputs=[json_path_box, sequence_filter],
+                    outputs=[plot_output_json, status_step07]
                 )
+
             
             # Step 08
             with gr.Tab("Step 08: Exportar CSV"):
